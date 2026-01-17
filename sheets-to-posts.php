@@ -22,14 +22,19 @@ function s2p_add_admin_menu() {
 function s2p_render_settings_page() {
   if (!current_user_can('manage_options')) { return; }
 
-  // Save
+  // Save sheet URL
   if (isset($_POST['s2p_save_settings'])) {
     check_admin_referer('s2p_settings_save');
 
     $sheet_url = isset($_POST['s2p_sheet_url']) ? esc_url_raw(trim($_POST['s2p_sheet_url'])) : '';
     update_option('s2p_sheet_url', $sheet_url);
 
-    echo '<div class="notice notice-success is-dismissible"><p>Saved.</p></div>';
+    echo '<div class="notice notice-success is-dismissible"><p>Sheet saved.</p></div>';
+  }
+
+  // Handle Sync button (for now it only shows a message)
+  if (isset($_POST['s2p_run_sync'])) {
+    echo '<div class="notice notice-info is-dismissible"><p>Sync clicked! (We will connect to Google Sheets next.)</p></div>';
   }
 
   $saved_url = get_option('s2p_sheet_url', '');
@@ -59,7 +64,13 @@ function s2p_render_settings_page() {
 
       <p>
         <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">
-          Save
+          Save Sheet
+        </button>
+
+        &nbsp;&nbsp;
+
+        <button type="submit" class="button button-secondary" name="s2p_run_sync" value="1">
+          Sync Now
         </button>
       </p>
     </form>
