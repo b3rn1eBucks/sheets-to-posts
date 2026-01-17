@@ -6,12 +6,9 @@
  * Author: Your Name
  */
 
-if (!defined('ABSPATH')) {
-  exit;
-}
+if (!defined('ABSPATH')) { exit; }
 
 add_action('admin_menu', 's2p_add_admin_menu');
-
 function s2p_add_admin_menu() {
   add_options_page(
     'Sheets to Posts',
@@ -23,13 +20,49 @@ function s2p_add_admin_menu() {
 }
 
 function s2p_render_settings_page() {
-  if (!current_user_can('manage_options')) {
-    return;
+  if (!current_user_can('manage_options')) { return; }
+
+  // Save
+  if (isset($_POST['s2p_save_settings'])) {
+    check_admin_referer('s2p_settings_save');
+
+    $sheet_url = isset($_POST['s2p_sheet_url']) ? esc_url_raw(trim($_POST['s2p_sheet_url'])) : '';
+    update_option('s2p_sheet_url', $sheet_url);
+
+    echo '<div class="notice notice-success is-dismissible"><p>Saved.</p></div>';
   }
+
+  $saved_url = get_option('s2p_sheet_url', '');
   ?>
   <div class="wrap">
     <h1>Sheets to Posts</h1>
-    <p>Your plugin is installed and working. Next we’ll add your Google Sheet connection here.</p>
+
+    <form method="post">
+      <?php wp_nonce_field('s2p_settings_save'); ?>
+
+      <table class="form-table" role="presentation">
+        <tr>
+          <th scope="row"><label for="s2p_sheet_url">Google Sheet link</label></th>
+          <td>
+            <input
+              type="url"
+              id="s2p_sheet_url"
+              name="s2p_sheet_url"
+              value="<?php echo esc_attr($saved_url); ?>"
+              class="regular-text"
+              placeholder="Paste your Google Sheets share link here"
+            />
+            <p class="description">Make sure the sheet is shared as “Anyone with the link” (Viewer).</p>
+          </td>
+        </tr>
+      </table>
+
+      <p>
+        <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">
+          Save
+        </button>
+      </p>
+    </form>
   </div>
   <?php
 }
