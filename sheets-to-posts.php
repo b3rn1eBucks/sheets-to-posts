@@ -9,6 +9,7 @@
 if (!defined('ABSPATH')) { exit; }
 
 add_action('admin_menu', 's2p_add_admin_menu');
+
 function s2p_add_admin_menu() {
   add_options_page(
     'Sheets to Posts',
@@ -19,22 +20,95 @@ function s2p_add_admin_menu() {
   );
 }
 
+/**
+ * Convert a normal Google Sheets link into a CSV export link.
+ */
+function s2p_to_csv_url($sheet_url) {
+
+  if (empty($sheet_url)) {
+    return '';
+  }
+
+  // Extract the sheet ID from a normal Google Sheets URL
+  if (preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheet_url, $matches)) {
+    $sheet_id = $matches[1];
+
+    return "https://docs.google.com/spreadsheets/d/{$sheet_id}/export?format=csv";
+  }
+
+  return '';
+}
+
+/**
+ * Fetch the sheet as CSV and return rows as an array.
+ */
+function s2p_fetch_sheet_rows($csv_url) {
+
+  if (empty($csv_url)) {
+    return new WP_Error('no_url', 'No valid sheet URL found.');
+  }
+
+  $response = wp_remote_get($csv_url, [
+    'timeout' => 20
+  ]);
+
+  if (is_wp_error($response)) {
+    return $response;
+  }
+
+  $body = wp_remote_retrieve_body($response);
+
+  if (empty($body)) {
+    return new WP_Error('empty_sheet', 'Sheet returned no data.');
+  }
+
+  $lines = explode("\n", trim($body));
+  $rows = [];
+
+  foreach ($lines as $line) {
+    $rows[] = str_getcsv($line);
+  }
+
+  return $rows;
+}
+
 function s2p_render_settings_page() {
+
   if (!current_user_can('manage_options')) { return; }
 
   // Save sheet URL
   if (isset($_POST['s2p_save_settings'])) {
     check_admin_referer('s2p_settings_save');
 
-    $sheet_url = isset($_POST['s2p_sheet_url']) ? esc_url_raw(trim($_POST['s2p_sheet_url'])) : '';
+    $sheet_url = isset($_POST['s2p_sheet_url'])
+      ? esc_url_raw(trim($_POST['s2p_sheet_url']))
+      : '';
+
     update_option('s2p_sheet_url', $sheet_url);
 
     echo '<div class="notice notice-success is-dismissible"><p>Sheet saved.</p></div>';
   }
 
-  // Handle Sync button (for now it only shows a message)
+  // Handle Sync button (now we actually read the sheet)
   if (isset($_POST['s2p_run_sync'])) {
-    echo '<div class="notice notice-info is-dismissible"><p>Sync clicked! (We will connect to Google Sheets next.)</p></div>';
+
+    $sheet_url = get_option('s2p_sheet_url', '');
+    $csv_url = s2p_to_csv_url($sheet_url);
+
+    $rows = s2p_fetch_sheet_rows($csv_url);
+
+    if (is_wp_error($rows)) {
+      echo '<div class="notice notice-error is-dismissible"><p>Error: '
+        . esc_html($rows->get_error_message())
+        . '</p></div>';
+    } else {
+
+      $count = count($rows) - 1; // subtract header row
+
+      echo '<div class="notice notice-info is-dismissible"><p>';
+      echo 'Sheet read successfully! Found ' . intval($count) . ' data rows.';
+      echo '</p></div>';
+    }
   }
 
   $saved_url = get_option('s2p_sheet_url', '');
@@ -57,7 +131,9 @@ function s2p_render_settings_page() {
               class="regular-text"
               placeholder="Paste your Google Sheets share link here"
             />
-            <p class="description">Make sure the sheet is shared as “Anyone with the link” (Viewer).</p>
+            <p class="description">
+              Share as “Anyone with the link → Viewer”.
+            </p>
           </td>
         </tr>
       </table>
