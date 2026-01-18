@@ -62,11 +62,33 @@ function s2p_fetch_sheet_rows($csv_url) {
     return new WP_Error('empty_sheet', 'Sheet returned no data.');
   }
 
-  $lines = explode("\n", trim($body));
+  // Split into lines (handles different line endings)
+  $lines = preg_split("/\r\n|\n|\r/", trim($body));
   $rows = [];
 
   foreach ($lines as $line) {
-    $rows[] = str_getcsv($line);
+
+    // Skip totally empty lines
+    if (trim($line) === '') {
+      continue;
+    }
+
+    $cols = str_getcsv($line);
+
+    // Skip lines where every column is empty/whitespace
+    $all_empty = true;
+    foreach ($cols as $c) {
+      if (trim((string)$c) !== '') {
+        $all_empty = false;
+        break;
+      }
+    }
+
+    if ($all_empty) {
+      continue;
+    }
+
+    $rows[] = $cols;
   }
 
   return $rows;
