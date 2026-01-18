@@ -456,15 +456,56 @@ function s2p_render_settings_page() {
   ?>
   <div class="wrap">
     <style>
-      .s2p-card { background:#fff; border:1px solid #dcdcde; border-radius:12px; padding:16px; max-width:920px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-      .s2p-grid { display:grid; grid-template-columns: 1fr; gap:14px; }
-      .s2p-row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
-      .s2p-row > * { flex:1; min-width: 260px; }
-      .s2p-help { color:#646970; margin:6px 0 0; }
-      .s2p-code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; background:#f6f7f7; border:1px solid #dcdcde; border-radius:10px; padding:12px; white-space:pre-wrap; }
-      .s2p-label { font-weight:600; margin-bottom:6px; display:block; }
-      .s2p-template { width:100%; min-height:140px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
-    </style>
+  .s2p-card{
+    background:#fff;
+    border:1px solid #dcdcde;
+    border-radius:12px;
+    padding:16px;
+    max-width:920px;
+    box-shadow:0 1px 2px rgba(0,0,0,.04);
+  }
+
+  .s2p-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
+
+  .s2p-row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .s2p-row > *{ flex:1; min-width:280px; }
+
+  .s2p-help{ color:#646970; margin:6px 0 0; line-height:1.45; }
+
+  /* Use plain code styling instead of “chips” */
+  .s2p-code{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    background:#f6f7f7;
+    border:1px solid #dcdcde;
+    border-radius:6px;
+    padding:2px 6px;
+    display:inline-block;
+    white-space:nowrap;
+  }
+
+  /* For the big “Supported columns” box */
+  .s2p-box{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    background:#f6f7f7;
+    border:1px solid #dcdcde;
+    border-radius:10px;
+    padding:12px;
+    white-space:pre-wrap;
+    line-height:1.45;
+  }
+
+  .s2p-label{ font-weight:600; margin-bottom:6px; display:block; }
+
+  .s2p-template{
+    width:100%;
+    min-height:140px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+
+  /* Make buttons feel less chunky on mobile */
+  .s2p-actions{ display:flex; gap:10px; flex-wrap:wrap; }
+  .s2p-actions .button{ padding:6px 14px; height:auto; line-height:1.4; }
+</style>
 
     <h1>Sheets to Posts</h1>
 
