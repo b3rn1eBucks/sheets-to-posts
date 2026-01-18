@@ -187,12 +187,6 @@ function s2p_set_featured_image_from_url($post_id, $image_url) {
 
 /**
  * Minimal Markdown -> HTML for Simple Mode.
- * Supports:
- *  - # Heading / ## Heading / ### Heading
- *  - **bold**
- *  - *italic*
- *  - - bullet lists
- *  - blank line = paragraph break
  */
 function s2p_markdown_to_html($text) {
   $text = (string)$text;
@@ -211,7 +205,6 @@ function s2p_markdown_to_html($text) {
         $html .= "</ul>\n";
         $in_list = false;
       }
-      // paragraph break
       $html .= "\n";
       continue;
     }
@@ -253,10 +246,8 @@ function s2p_markdown_to_html($text) {
     $html .= "</ul>\n";
   }
 
-  // Inline bold/italic (after escaping & block creation)
-  // Convert **bold**
+  // Inline bold/italic
   $html = preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', $html);
-  // Convert *italic*
   $html = preg_replace('/\*(.+?)\*/s', '<em>$1</em>', $html);
 
   return $html;
@@ -264,21 +255,16 @@ function s2p_markdown_to_html($text) {
 
 /**
  * Developer Mode templating: replace {{column_name}} with row value.
- * - Template is treated as HTML.
- * - Values are escaped as text by default (safe).
- * - After replacement, we run wp_kses_post on final output.
  */
 function s2p_apply_template($template, $row, $map) {
   $out = (string)$template;
 
   foreach ($map as $key => $idx) {
     $val = isset($row[$idx]) ? (string)$row[$idx] : '';
-    // Insert safely as text (not raw HTML)
     $out = str_replace('{{' . $key . '}}', esc_html($val), $out);
   }
 
-  // Also support {{content_html}} token if user wants to allow HTML in a specific column:
-  // If the sheet has a column named content_html, we insert it as allowed HTML.
+  // Optional raw HTML column
   if (isset($map['content_html'])) {
     $raw = isset($row[$map['content_html']]) ? (string)$row[$map['content_html']] : '';
     $out = str_replace('{{content_html}}', $raw, $out);
@@ -376,7 +362,7 @@ function s2p_render_settings_page() {
           $status_raw    = strtolower(trim(s2p_cell($row, $map, 'status')));
           $status        = ($status_raw === 'publish') ? 'publish' : 'draft';
 
-          // Hash to detect unchanged rows (prevents unnecessary updates)
+          // Hash to detect unchanged rows
           $hash_source = json_encode([
             'mode' => $saved_mode,
             'template' => $saved_mode === 'developer' ? $saved_tpl : '',
@@ -452,60 +438,52 @@ function s2p_render_settings_page() {
       }
     }
   }
-
   ?>
   <div class="wrap">
     <style>
-  .s2p-card{
-    background:#fff;
-    border:1px solid #dcdcde;
-    border-radius:12px;
-    padding:16px;
-    max-width:920px;
-    box-shadow:0 1px 2px rgba(0,0,0,.04);
-  }
+      .s2p-card{
+        background:#fff;
+        border:1px solid #dcdcde;
+        border-radius:12px;
+        padding:16px;
+        max-width:920px;
+        box-shadow:0 1px 2px rgba(0,0,0,.04);
+      }
+      .s2p-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
+      .s2p-row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+      .s2p-row > *{ flex:1; min-width:280px; }
+      .s2p-help{ color:#646970; margin:6px 0 0; line-height:1.45; }
 
-  .s2p-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
+      .s2p-code{
+        font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        background:#f6f7f7;
+        border:1px solid #dcdcde;
+        border-radius:6px;
+        padding:2px 6px;
+        display:inline-block;
+        white-space:nowrap;
+      }
 
-  .s2p-row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
-  .s2p-row > *{ flex:1; min-width:280px; }
+      .s2p-box{
+        font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        background:#f6f7f7;
+        border:1px solid #dcdcde;
+        border-radius:10px;
+        padding:12px;
+        white-space:pre-wrap;
+        line-height:1.45;
+      }
 
-  .s2p-help{ color:#646970; margin:6px 0 0; line-height:1.45; }
+      .s2p-label{ font-weight:600; margin-bottom:6px; display:block; }
+      .s2p-template{
+        width:100%;
+        min-height:140px;
+        font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
 
-  /* Use plain code styling instead of “chips” */
-  .s2p-code{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    background:#f6f7f7;
-    border:1px solid #dcdcde;
-    border-radius:6px;
-    padding:2px 6px;
-    display:inline-block;
-    white-space:nowrap;
-  }
-
-  /* For the big “Supported columns” box */
-  .s2p-box{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    background:#f6f7f7;
-    border:1px solid #dcdcde;
-    border-radius:10px;
-    padding:12px;
-    white-space:pre-wrap;
-    line-height:1.45;
-  }
-
-  .s2p-label{ font-weight:600; margin-bottom:6px; display:block; }
-
-  .s2p-template{
-    width:100%;
-    min-height:140px;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  }
-
-  /* Make buttons feel less chunky on mobile */
-  .s2p-actions{ display:flex; gap:10px; flex-wrap:wrap; }
-  .s2p-actions .button{ padding:6px 14px; height:auto; line-height:1.4; }
-</style>
+      .s2p-actions{ display:flex; gap:10px; flex-wrap:wrap; }
+      .s2p-actions .button{ padding:6px 14px; height:auto; line-height:1.4; }
+    </style>
 
     <h1>Sheets to Posts</h1>
 
@@ -535,6 +513,7 @@ function s2p_render_settings_page() {
                 <option value="simple" <?php selected($saved_mode, 'simple'); ?>>Simple Mode (Markdown)</option>
                 <option value="developer" <?php selected($saved_mode, 'developer'); ?>>Developer Mode (Template + Tokens)</option>
               </select>
+
               <p class="s2p-help">
                 Simple Mode: write <span class="s2p-code">**bold**</span>, <span class="s2p-code">*italic*</span>, <span class="s2p-code"># Heading</span>, <span class="s2p-code">- bullets</span> in the Sheet.<br>
                 Developer Mode: build a template using tokens like <span class="s2p-code">{{title}}</span>.
@@ -550,14 +529,14 @@ function s2p_render_settings_page() {
 
           <div>
             <span class="s2p-label">Supported Sheet Columns</span>
-            <div class="s2p-code">Required: title
+            <div class="s2p-box">Required: title
 Simple Mode requires: content
 Optional: category, tags, featured_image, status (draft/publish)
 
 Template tokens (Developer Mode): use {{column_name}} for any header.</div>
           </div>
 
-          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div class="s2p-actions">
             <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">Save Settings</button>
             <button type="submit" class="button button-secondary" name="s2p_run_sync" value="1">Sync Now</button>
           </div>
