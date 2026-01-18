@@ -138,22 +138,38 @@ function s2p_render_settings_page() {
       echo 'Sheet read successfully! I see ' . intval($count) . ' posts to import (the header row with titles is not counted).';
       echo '</p></div>';
 
-      // SAFETY: Create only ONE post for now (the first data row)
+            // CREATE ALL POSTS (still as drafts)
       if ($count > 0) {
 
-        $first = $data_rows[0];
+        $created = 0;
 
-        $title   = isset($first[0]) ? sanitize_text_field($first[0]) : '';
-        $content = isset($first[1]) ? wp_kses_post($first[1]) : '';
+        foreach ($data_rows as $row) {
 
-        if ($title !== '' && $content !== '') {
+          $title   = isset($row[0]) ? sanitize_text_field($row[0]) : '';
+          $content = isset($row[1]) ? wp_kses_post($row[1]) : '';
 
-          $post_id = wp_insert_post([
-            'post_title'   => $title,
-            'post_content' => $content,
-            'post_status'  => 'draft',
-            'post_type'    => 'post',
-          ], true);
+          if ($title !== '' && $content !== '') {
+
+            $post_id = wp_insert_post([
+              'post_title'   => $title,
+              'post_content' => $content,
+              'post_status'  => 'draft',
+              'post_type'    => 'post',
+            ], true);
+
+            if (!is_wp_error($post_id)) {
+              $created++;
+            }
+          }
+        }
+
+        echo '<div class="notice notice-success is-dismissible"><p>';
+        echo 'Created ' . intval($created) . ' new draft posts from your sheet.';
+        echo '</p></div>';
+
+      } else {
+        echo '<div class="notice notice-warning is-dismissible"><p>No data rows found to import.</p></div>';
+      }
 
           if (is_wp_error($post_id)) {
             echo '<div class="notice notice-error is-dismissible"><p>Post create failed: '
