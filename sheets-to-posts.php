@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Sheets to Posts
  * Description: Sync Google Sheets rows to WordPress posts with Simple (Markdown) or Developer (Template) modes.
- * Version: 0.3.0
+ * Version: 0.3.2
  * Author: Isle Insight
  */
 
@@ -11,15 +11,14 @@ if (!defined('ABSPATH')) { exit; }
 add_action('admin_menu', 's2p_add_admin_menu');
 
 function s2p_add_admin_menu() {
-
   add_menu_page(
-    'Sheets to Posts',          // Page title
-    'Sheets to Posts',          // Menu title
-    'manage_options',           // Capability
-    'sheets-to-posts',          // Menu slug
-    's2p_render_settings_page', // Callback (your settings page)
-    'dashicons-media-spreadsheet', // Icon
-    58                          // Position in the menu (optional)
+    'Sheets to Posts',
+    'Sheets to Posts',
+    'manage_options',
+    'sheets-to-posts',
+    's2p_render_settings_page',
+    'dashicons-media-spreadsheet',
+    58
   );
 }
 
@@ -276,6 +275,23 @@ function s2p_apply_template($template, $row, $map) {
   return wp_kses_post($out);
 }
 
+/**
+ * Build a "row hash" to detect unchanged rows.
+ */
+function s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status) {
+  $hash_source = json_encode([
+    'mode' => $saved_mode,
+    'template' => $saved_mode === 'developer' ? (string)$saved_tpl : '',
+    'title' => (string)$title,
+    'content' => (string)$final_content,
+    'category' => (string)$category_name,
+    'tags' => (string)$tags_string,
+    'featured_image' => (string)$image_url,
+    'status' => (string)$status,
+  ]);
+  return md5($hash_source);
+}
+
 function s2p_render_settings_page() {
   if (!current_user_can('manage_options')) { return; }
 
@@ -299,24 +315,42 @@ function s2p_render_settings_page() {
   $saved_mode = get_option('s2p_mode', 'simple');
   $saved_tpl  = get_option('s2p_template', "<h2>{{title}}</h2>\n<p>{{content}}</p>");
 
-  // Sync
-  if (isset($_POST['s2p_run_sync'])) {
-
-    $sheet_url = get_option('s2p_sheet_url', '');
-    $csv_url   = s2p_to_csv_url($sheet_url);
-
+  /**
+   * Helper: load sheet rows and header map.
+   */
+  $s2p_load_sheet = function() use ($saved_url) {
+    $csv_url = s2p_to_csv_url($saved_url);
     $rows = s2p_fetch_sheet_rows($csv_url);
 
-    if (is_wp_error($rows)) {
-      echo '<div class="notice notice-error is-dismissible"><p>Error: '
-        . esc_html($rows->get_error_message())
-        . '</p></div>';
+    if (is_wp_error($rows)) { return $rows; }
+    if (count($rows) < 2) {
+      return new WP_Error('not_enough_rows', 'Sheet must have a header row plus at least one data row.');
+    }
+
+    $header = array_shift($rows);
+    $map = s2p_header_map($header);
+
+    return [
+      'header' => $header,
+      'map' => $map,
+      'data_rows' => $rows,
+    ];
+  };
+
+  /**
+   * TEST FIRST ROW (preview only)
+   */
+  if (isset($_POST['s2p_test_row'])) {
+
+    $loaded = $s2p_load_sheet();
+
+    if (is_wp_error($loaded)) {
+      echo '<div class="notice notice-error is-dismissible"><p>Error: ' . esc_html($loaded->get_error_message()) . '</p></div>';
     } else {
 
-      $header = array_shift($rows);
-      $map = s2p_header_map($header);
+      $map = $loaded['map'];
+      $data_rows = $loaded['data_rows'];
 
-      // Required columns
       if (!isset($map['title']) || (!isset($map['content']) && $saved_mode !== 'developer')) {
         echo '<div class="notice notice-error is-dismissible"><p>';
         echo 'Your sheet must have a header row with at least <strong>title</strong>. ';
@@ -328,9 +362,112 @@ function s2p_render_settings_page() {
         echo '</p></div>';
       } else {
 
-        $data_rows = $rows;
-        $count = count($data_rows);
+        $first = $data_rows[0];
+        $title = sanitize_text_field(s2p_cell($first, $map, 'title'));
 
+        if ($title === '') {
+          echo '<div class="notice notice-warning is-dismissible"><p>Test row: the first data row has an empty <strong>title</strong>.</p></div>';
+        } else {
+
+          // Build preview content by mode
+          if ($saved_mode === 'developer') {
+            $final_content = s2p_apply_template($saved_tpl, $first, $map);
+          } else {
+            $content_raw = s2p_cell($first, $map, 'content');
+            $final_content = wp_kses_post(s2p_markdown_to_html($content_raw));
+          }
+
+          $category_name = sanitize_text_field(s2p_cell($first, $map, 'category'));
+          $tags_string   = s2p_cell($first, $map, 'tags');
+          $image_url     = esc_url_raw(s2p_cell($first, $map, 'featured_image'));
+          $status_raw    = strtolower(trim(s2p_cell($first, $map, 'status')));
+          $status        = ($status_raw === 'publish') ? 'publish' : 'draft';
+
+          $row_hash = s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status);
+
+          $existing_id = s2p_find_post_by_title($title);
+
+          $action = 'Would CREATE a new post';
+          $meta_line = '';
+
+          if ($existing_id) {
+            $prev_hash = get_post_meta($existing_id, '_s2p_row_hash', true);
+            if ($prev_hash && $prev_hash === $row_hash) {
+              $action = 'Would do NOTHING (unchanged)';
+              $meta_line = 'Matched existing post ID ' . intval($existing_id) . ' and content hash is unchanged.';
+            } else {
+              $action = 'Would UPDATE an existing post';
+              $meta_line = 'Matched existing post ID ' . intval($existing_id) . ' (changes detected).';
+            }
+          } else {
+            $meta_line = 'No existing post found with this exact title.';
+          }
+
+          $parsed_tags = s2p_parse_tags($tags_string);
+          $tags_preview = !empty($parsed_tags) ? implode(', ', array_map('sanitize_text_field', $parsed_tags)) : '(none)';
+          $cat_preview = ($category_name !== '') ? $category_name : '(none)';
+          $img_preview = ($image_url !== '') ? $image_url : '(none)';
+
+          echo '<div class="notice notice-info is-dismissible"><p><strong>Test First Row Preview</strong></p></div>';
+
+          echo '<div class="s2p-card" style="margin-top:12px;">';
+          echo '<div class="s2p-grid">';
+
+          echo '<div><div class="s2p-box"><strong>Result:</strong> ' . esc_html($action) . "\n" . esc_html($meta_line) . '</div></div>';
+
+          echo '<div class="s2p-row">';
+          echo '<div><div class="s2p-box"><strong>Title:</strong> ' . esc_html($title) . '</div></div>';
+          echo '<div><div class="s2p-box"><strong>Status:</strong> ' . esc_html($status) . '</div></div>';
+          echo '</div>';
+
+          echo '<div class="s2p-row">';
+          echo '<div><div class="s2p-box"><strong>Category:</strong> ' . esc_html($cat_preview) . '</div></div>';
+          echo '<div><div class="s2p-box"><strong>Tags:</strong> ' . esc_html($tags_preview) . '</div></div>';
+          echo '</div>';
+
+          echo '<div><div class="s2p-box"><strong>Featured Image URL:</strong> ' . esc_html($img_preview) . '</div></div>';
+
+          echo '<div>';
+          echo '<span class="s2p-label">Rendered Content Preview</span>';
+          echo '<div style="border:1px solid #dcdcde; border-radius:12px; padding:14px; background:#fff;">';
+          echo wp_kses_post($final_content);
+          echo '</div>';
+          echo '<p class="s2p-help" style="margin-top:10px;"><strong>Note:</strong> This is a preview only. It does not create or update posts.</p>';
+          echo '</div>';
+
+          echo '</div>';
+          echo '</div>';
+        }
+      }
+    }
+  }
+
+  /**
+   * SYNC (real create/update)
+   */
+  if (isset($_POST['s2p_run_sync'])) {
+
+    $loaded = $s2p_load_sheet();
+
+    if (is_wp_error($loaded)) {
+      echo '<div class="notice notice-error is-dismissible"><p>Error: ' . esc_html($loaded->get_error_message()) . '</p></div>';
+    } else {
+
+      $map = $loaded['map'];
+      $data_rows = $loaded['data_rows'];
+
+      if (!isset($map['title']) || (!isset($map['content']) && $saved_mode !== 'developer')) {
+        echo '<div class="notice notice-error is-dismissible"><p>';
+        echo 'Your sheet must have a header row with at least <strong>title</strong>. ';
+        if ($saved_mode === 'simple') {
+          echo 'Simple Mode also requires <strong>content</strong>.';
+        } else {
+          echo 'Developer Mode uses your template tokens (ex: {{title}}).';
+        }
+        echo '</p></div>';
+      } else {
+
+        $count = count($data_rows);
         echo '<div class="notice notice-info is-dismissible"><p>';
         echo 'Sheet read successfully! I see ' . intval($count) . ' rows to process (header row not counted).';
         echo '</p></div>';
@@ -365,18 +502,7 @@ function s2p_render_settings_page() {
           $status_raw    = strtolower(trim(s2p_cell($row, $map, 'status')));
           $status        = ($status_raw === 'publish') ? 'publish' : 'draft';
 
-          // Hash to detect unchanged rows
-          $hash_source = json_encode([
-            'mode' => $saved_mode,
-            'template' => $saved_mode === 'developer' ? $saved_tpl : '',
-            'title' => $title,
-            'content' => $final_content,
-            'category' => $category_name,
-            'tags' => $tags_string,
-            'featured_image' => $image_url,
-            'status' => $status,
-          ]);
-          $row_hash = md5($hash_source);
+          $row_hash = s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status);
 
           // No duplicates: find existing by title
           $existing_id = s2p_find_post_by_title($title);
@@ -441,6 +567,7 @@ function s2p_render_settings_page() {
       }
     }
   }
+
   ?>
   <div class="wrap">
     <style>
@@ -452,9 +579,12 @@ function s2p_render_settings_page() {
         max-width:920px;
         box-shadow:0 1px 2px rgba(0,0,0,.04);
       }
+
       .s2p-grid{ display:grid; grid-template-columns:1fr; gap:14px; }
+
       .s2p-row{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
       .s2p-row > *{ flex:1; min-width:280px; }
+
       .s2p-help{ color:#646970; margin:6px 0 0; line-height:1.45; }
 
       .s2p-code{
@@ -478,6 +608,7 @@ function s2p_render_settings_page() {
       }
 
       .s2p-label{ font-weight:600; margin-bottom:6px; display:block; }
+
       .s2p-template{
         width:100%;
         min-height:140px;
@@ -518,15 +649,39 @@ function s2p_render_settings_page() {
               </select>
 
               <p class="s2p-help">
-                Simple Mode: write <span class="s2p-code">**bold**</span>, <span class="s2p-code">*italic*</span>, <span class="s2p-code"># Heading</span>, <span class="s2p-code">- bullets</span> in the Sheet.<br>
-                Developer Mode: build a template using tokens like <span class="s2p-code">{{title}}</span>.
+                <strong>Simple Mode (for non-technical users):</strong><br>
+                Type formatting directly in the <span class="s2p-code">content</span> cell in your Google Sheet.
+                Wrap the word(s) you want to format, like this:
+              </p>
+
+              <div class="s2p-box">
+**bold word**     → bold word
+*italic word*     → italic word
+# Heading         → big heading
+- Bullet item     → bullet list item
+
+Copy/paste example for the content column:
+
+# My Post Heading
+This is a **bold word** and this is *italic*.
+- First point
+- Second point
+              </div>
+
+              <p class="s2p-help">
+                <strong>Developer Mode:</strong> Use a template with tokens like <span class="s2p-code">{{title}}</span> and <span class="s2p-code">{{content}}</span>.
               </p>
             </div>
 
             <div>
               <label class="s2p-label" for="s2p_template">Developer Mode Template</label>
               <textarea id="s2p_template" name="s2p_template" class="s2p-template"><?php echo esc_textarea($saved_tpl); ?></textarea>
-              <p class="s2p-help">Tokens come from your header row. Example tokens: <span class="s2p-code">{{title}}</span>, <span class="s2p-code">{{content}}</span>, <span class="s2p-code">{{price}}</span>.</p>
+              <p class="s2p-help">
+                Tokens come from your header row. Examples:
+                <span class="s2p-code">{{title}}</span>,
+                <span class="s2p-code">{{content}}</span>,
+                <span class="s2p-code">{{price}}</span>.
+              </p>
             </div>
           </div>
 
@@ -541,8 +696,13 @@ Template tokens (Developer Mode): use {{column_name}} for any header.</div>
 
           <div class="s2p-actions">
             <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">Save Settings</button>
+            <button type="submit" class="button" name="s2p_test_row" value="1">Test First Row (Preview)</button>
             <button type="submit" class="button button-secondary" name="s2p_run_sync" value="1">Sync Now</button>
           </div>
+
+          <p class="s2p-help" style="margin-top:4px;">
+            Tip: Click <strong>Test First Row</strong> first to preview what will happen. It does not create or update posts.
+          </p>
         </div>
       </form>
     </div>
