@@ -32,7 +32,6 @@ function s2p_to_csv_url($sheet_url) {
   // Extract the sheet ID from a normal Google Sheets URL
   if (preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheet_url, $matches)) {
     $sheet_id = $matches[1];
-
     return "https://docs.google.com/spreadsheets/d/{$sheet_id}/export?format=csv";
   }
 
@@ -40,7 +39,7 @@ function s2p_to_csv_url($sheet_url) {
 }
 
 /**
- * Fetch the sheet as CSV and return rows as an array.
+ * Fetch the sheet as CSV and return rows as an array (including header).
  */
 function s2p_fetch_sheet_rows($csv_url) {
 
@@ -83,7 +82,6 @@ function s2p_fetch_sheet_rows($csv_url) {
         break;
       }
     }
-
     if ($all_empty) {
       continue;
     }
@@ -111,16 +109,21 @@ function s2p_render_settings_page() {
     echo '<div class="notice notice-success is-dismissible"><p>Sheet saved.</p></div>';
   }
 
-  // Handle Sync button (now we actually read the sheet)
+  // Handle Sync button
   if (isset($_POST['s2p_run_sync'])) {
 
     $sheet_url = get_option('s2p_sheet_url', '');
-    $csv_url = s2p_to_csv_url($sheet_url);
+    $csv_url   = s2p_to_csv_url($sheet_url);
 
-        if (is_wp_error($rows)) {
+    // ✅ YOU WERE MISSING THIS LINE:
+    $rows = s2p_fetch_sheet_rows($csv_url);
+
+    if (is_wp_error($rows)) {
+
       echo '<div class="notice notice-error is-dismissible"><p>Error: '
         . esc_html($rows->get_error_message())
         . '</p></div>';
+
     } else {
 
       // Remove the header row (title/content)
@@ -135,7 +138,7 @@ function s2p_render_settings_page() {
       echo 'Sheet read successfully! I see ' . intval($count) . ' posts to import (the header row with titles is not counted).';
       echo '</p></div>';
 
-      // SAFETY: Create only ONE post for now (the first row)
+      // SAFETY: Create only ONE post for now (the first data row)
       if ($count > 0) {
 
         $first = $data_rows[0];
