@@ -128,7 +128,7 @@ function s2p_render_settings_page() {
       $count = count($rows) - 1; // subtract header row
 
       echo '<div class="notice notice-info is-dismissible"><p>';
-      echo 'Sheet read successfully! Found ' . intval($count) . ' data rows.';
+      echo 'Sheet read successfully! I see ' . intval($count) . ' posts to import (the header row with titles is not counted).';
       echo '</p></div>';
     }
   }
