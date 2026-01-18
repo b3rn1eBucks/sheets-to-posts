@@ -117,19 +117,58 @@ function s2p_render_settings_page() {
     $sheet_url = get_option('s2p_sheet_url', '');
     $csv_url = s2p_to_csv_url($sheet_url);
 
-    $rows = s2p_fetch_sheet_rows($csv_url);
-
-    if (is_wp_error($rows)) {
+        if (is_wp_error($rows)) {
       echo '<div class="notice notice-error is-dismissible"><p>Error: '
         . esc_html($rows->get_error_message())
         . '</p></div>';
     } else {
 
-      $count = count($rows) - 1; // subtract header row
+      // Remove the header row (title/content)
+      $header = array_shift($rows);
+
+      // Everything left are the rows we want to import as posts
+      $data_rows = $rows;
+
+      $count = count($data_rows);
 
       echo '<div class="notice notice-info is-dismissible"><p>';
       echo 'Sheet read successfully! I see ' . intval($count) . ' posts to import (the header row with titles is not counted).';
       echo '</p></div>';
+
+      // SAFETY: Create only ONE post for now (the first row)
+      if ($count > 0) {
+
+        $first = $data_rows[0];
+
+        $title   = isset($first[0]) ? sanitize_text_field($first[0]) : '';
+        $content = isset($first[1]) ? wp_kses_post($first[1]) : '';
+
+        if ($title !== '' && $content !== '') {
+
+          $post_id = wp_insert_post([
+            'post_title'   => $title,
+            'post_content' => $content,
+            'post_status'  => 'draft',
+            'post_type'    => 'post',
+          ], true);
+
+          if (is_wp_error($post_id)) {
+            echo '<div class="notice notice-error is-dismissible"><p>Post create failed: '
+              . esc_html($post_id->get_error_message())
+              . '</p></div>';
+          } else {
+            echo '<div class="notice notice-success is-dismissible"><p>Created 1 draft post: <strong>'
+              . esc_html($title)
+              . '</strong></p></div>';
+          }
+
+        } else {
+          echo '<div class="notice notice-warning is-dismissible"><p>First data row is missing a title or content.</p></div>';
+        }
+
+      } else {
+        echo '<div class="notice notice-warning is-dismissible"><p>No data rows found to import.</p></div>';
+      }
     }
   }
 
