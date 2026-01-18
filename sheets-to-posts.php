@@ -22,6 +22,10 @@ function s2p_add_admin_menu() {
 
 /**
  * Convert a normal Google Sheets link into a CSV export link.
+ * Example share link:
+ * https://docs.google.com/spreadsheets/d/SHEET_ID/edit?usp=sharing
+ * CSV export:
+ * https://docs.google.com/spreadsheets/d/SHEET_ID/export?format=csv
  */
 function s2p_to_csv_url($sheet_url) {
 
@@ -29,7 +33,6 @@ function s2p_to_csv_url($sheet_url) {
     return '';
   }
 
-  // Extract the sheet ID from a normal Google Sheets URL
   if (preg_match('/\/d\/([a-zA-Z0-9-_]+)/', $sheet_url, $matches)) {
     $sheet_id = $matches[1];
     return "https://docs.google.com/spreadsheets/d/{$sheet_id}/export?format=csv";
@@ -39,7 +42,7 @@ function s2p_to_csv_url($sheet_url) {
 }
 
 /**
- * Fetch the sheet as CSV and return rows as an array (including header).
+ * Fetch the sheet as CSV and return rows as an array (including header row).
  */
 function s2p_fetch_sheet_rows($csv_url) {
 
@@ -48,7 +51,7 @@ function s2p_fetch_sheet_rows($csv_url) {
   }
 
   $response = wp_remote_get($csv_url, [
-    'timeout' => 20
+    'timeout' => 20,
   ]);
 
   if (is_wp_error($response)) {
@@ -67,7 +70,6 @@ function s2p_fetch_sheet_rows($csv_url) {
 
   foreach ($lines as $line) {
 
-    // Skip totally empty lines
     if (trim($line) === '') {
       continue;
     }
@@ -115,7 +117,6 @@ function s2p_render_settings_page() {
     $sheet_url = get_option('s2p_sheet_url', '');
     $csv_url   = s2p_to_csv_url($sheet_url);
 
-    // ✅ YOU WERE MISSING THIS LINE:
     $rows = s2p_fetch_sheet_rows($csv_url);
 
     if (is_wp_error($rows)) {
@@ -126,10 +127,10 @@ function s2p_render_settings_page() {
 
     } else {
 
-      // Remove the header row (title/content)
+      // First row is header (title/content)
       $header = array_shift($rows);
 
-      // Everything left are the rows we want to import as posts
+      // Remaining rows are data
       $data_rows = $rows;
 
       $count = count($data_rows);
@@ -138,54 +139,41 @@ function s2p_render_settings_page() {
       echo 'Sheet read successfully! I see ' . intval($count) . ' posts to import (the header row with titles is not counted).';
       echo '</p></div>';
 
-            // CREATE ALL POSTS (still as drafts)
       if ($count > 0) {
 
         $created = 0;
+        $skipped = 0;
 
         foreach ($data_rows as $row) {
 
           $title   = isset($row[0]) ? sanitize_text_field($row[0]) : '';
           $content = isset($row[1]) ? wp_kses_post($row[1]) : '';
 
-          if ($title !== '' && $content !== '') {
+          if ($title === '' || $content === '') {
+            $skipped++;
+            continue;
+          }
 
-            $post_id = wp_insert_post([
-              'post_title'   => $title,
-              'post_content' => $content,
-              'post_status'  => 'draft',
-              'post_type'    => 'post',
-            ], true);
+          $post_id = wp_insert_post([
+            'post_title'   => $title,
+            'post_content' => $content,
+            'post_status'  => 'draft', // keep safe
+            'post_type'    => 'post',
+          ], true);
 
-            if (!is_wp_error($post_id)) {
-              $created++;
-            }
+          if (is_wp_error($post_id)) {
+            $skipped++;
+          } else {
+            $created++;
           }
         }
 
         echo '<div class="notice notice-success is-dismissible"><p>';
-        echo 'Created ' . intval($created) . ' new draft posts from your sheet.';
+        echo 'Created ' . intval($created) . ' new draft posts. Skipped ' . intval($skipped) . ' row(s).';
         echo '</p></div>';
 
       } else {
-        echo '<div class="notice notice-warning is-dismissible"><p>No data rows found to import.</p></div>';
-      }
 
-          if (is_wp_error($post_id)) {
-            echo '<div class="notice notice-error is-dismissible"><p>Post create failed: '
-              . esc_html($post_id->get_error_message())
-              . '</p></div>';
-          } else {
-            echo '<div class="notice notice-success is-dismissible"><p>Created 1 draft post: <strong>'
-              . esc_html($title)
-              . '</strong></p></div>';
-          }
-
-        } else {
-          echo '<div class="notice notice-warning is-dismissible"><p>First data row is missing a title or content.</p></div>';
-        }
-
-      } else {
         echo '<div class="notice notice-warning is-dismissible"><p>No data rows found to import.</p></div>';
       }
     }
@@ -211,9 +199,7 @@ function s2p_render_settings_page() {
               class="regular-text"
               placeholder="Paste your Google Sheets share link here"
             />
-            <p class="description">
-              Share as “Anyone with the link → Viewer”.
-            </p>
+            <p class="description">Share as “Anyone with the link → Viewer”.</p>
           </td>
         </tr>
       </table>
