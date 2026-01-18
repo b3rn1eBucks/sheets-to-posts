@@ -11,12 +11,15 @@ if (!defined('ABSPATH')) { exit; }
 add_action('admin_menu', 's2p_add_admin_menu');
 
 function s2p_add_admin_menu() {
-  add_options_page(
-    'Sheets to Posts',
-    'Sheets to Posts',
-    'manage_options',
-    'sheets-to-posts',
-    's2p_render_settings_page'
+
+  add_menu_page(
+    'Sheets to Posts',          // Page title
+    'Sheets to Posts',          // Menu title
+    'manage_options',           // Capability
+    'sheets-to-posts',          // Menu slug
+    's2p_render_settings_page', // Callback (your settings page)
+    'dashicons-media-spreadsheet', // Icon
+    58                          // Position in the menu (optional)
   );
 }
 
