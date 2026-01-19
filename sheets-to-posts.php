@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Sheets to Posts
  * Description: Sync Google Sheets rows to WordPress posts with Simple (Markdown) or Developer (Template) modes.
- * Version: 0.3.5
+ * Version: 0.3.6
  * Author: Isle Insight
  */
 
@@ -694,6 +694,17 @@ function s2p_render_settings_page() {
               style="width:100%; max-width:920px;"
             />
             <p class="s2p-help">Google Sheet must be shared as: <strong>Anyone with the link → Viewer</strong>.</p>
+
+            <!-- Buttons moved under the textbox -->
+            <div class="s2p-actions" style="margin-top:10px;">
+              <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">Save Settings</button>
+              <button type="submit" class="button" name="s2p_test_row" value="1">Test Row (Preview)</button>
+              <button type="submit" class="button button-secondary" name="s2p_run_sync" value="1">Sync Now</button>
+            </div>
+
+            <p class="s2p-help" style="margin-top:6px;">
+              Tip: Use <strong>Test Row</strong> to preview what will happen. It does not create or update posts.
+            </p>
           </div>
 
           <div class="s2p-row">
@@ -762,16 +773,6 @@ Template tokens (Developer Mode): use {{column_name}} for any header.</div>
               <span class="s2p-help" style="margin:0;">(Row 1 = first data row under the headers)</span>
             <?php endif; ?>
           </div>
-
-          <div class="s2p-actions">
-            <button type="submit" class="button button-primary" name="s2p_save_settings" value="1">Save Settings</button>
-            <button type="submit" class="button" name="s2p_test_row" value="1">Test Row (Preview)</button>
-            <button type="submit" class="button button-secondary" name="s2p_run_sync" value="1">Sync Now</button>
-          </div>
-
-          <p class="s2p-help" style="margin-top:4px;">
-            Tip: Use <strong>Test Row</strong> to preview what will happen. It does not create or update posts.
-          </p>
 
         </div>
       </form>
