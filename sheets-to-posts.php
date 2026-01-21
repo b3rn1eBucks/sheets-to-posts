@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Sheets to Posts
  * Description: Sync Google Sheets rows to WordPress posts with Simple (Markdown) or Developer (Template) modes. Supports multiple sheets and scheduled sync.
- * Version: 0.4.0
+ * Version: 0.4.1
  * Author: Isle Insight
  */
 
@@ -25,6 +25,73 @@ function s2p_add_admin_menu() {
     'dashicons-media-spreadsheet',
     58
   );
+}
+
+/**
+ * ----------------------------
+ * Reliability helpers (Best option)
+ * ----------------------------
+ * Best for user happiness:
+ * - Keep WP-Cron (works everywhere)
+ * - Add a watchdog that "catches up" on low-traffic sites
+ * - Show clear guidance + Real Cron upgrade instructions (optional)
+ */
+function s2p_is_real_cron_enabled() {
+  return (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON);
+}
+
+/**
+ * Watchdog: if scheduled sync is enabled but WP-Cron is late/missing,
+ * schedule a near-immediate one-time run on the next site hit (admin or front-end).
+ *
+ * This does NOT require the customer to edit wp-config or set server cron,
+ * but still gives them a better experience on low-traffic sites.
+ */
+add_action('init', 's2p_cron_watchdog', 20);
+function s2p_cron_watchdog() {
+  $enabled = (bool) get_option('s2p_schedule_enabled', false);
+  if (!$enabled) { return; }
+
+  $freq = get_option('s2p_schedule_frequency', 'hourly'); // s2p_15min | hourly | daily
+  $interval = s2p_frequency_to_seconds($freq);
+
+  // If no schedule exists, recreate it.
+  $next = wp_next_scheduled('s2p_cron_sync');
+  if (!$next) {
+    s2p_reschedule_cron_from_options();
+    $next = wp_next_scheduled('s2p_cron_sync');
+  }
+
+  // If it's overdue by > 2 minutes, queue a one-time catch-up soon.
+  $now = time();
+  if ($next && ($now - $next) > 120) {
+    if (!wp_next_scheduled('s2p_cron_sync_catchup')) {
+      wp_schedule_single_event($now + 30, 's2p_cron_sync_catchup');
+    }
+  }
+
+  // Extra: if the last run was a long time ago (double the interval), also catch up.
+  $last_run = (int) get_option('s2p_last_cron_run_ts', 0);
+  if ($interval > 0 && $last_run > 0 && ($now - $last_run) > (2 * $interval)) {
+    if (!wp_next_scheduled('s2p_cron_sync_catchup')) {
+      wp_schedule_single_event($now + 30, 's2p_cron_sync_catchup');
+    }
+  }
+}
+
+/**
+ * Catch-up hook (one-time)
+ */
+add_action('s2p_cron_sync_catchup', 's2p_run_scheduled_sync');
+
+/**
+ * Frequency -> seconds
+ */
+function s2p_frequency_to_seconds($freq) {
+  if ($freq === 's2p_15min') { return 15 * 60; }
+  if ($freq === 'daily') { return DAY_IN_SECONDS; }
+  // hourly default
+  return HOUR_IN_SECONDS;
 }
 
 /**
@@ -62,6 +129,11 @@ function s2p_on_deactivate() {
   if ($timestamp) {
     wp_unschedule_event($timestamp, 's2p_cron_sync');
   }
+  // Also clear catch-up
+  $t2 = wp_next_scheduled('s2p_cron_sync_catchup');
+  if ($t2) {
+    wp_unschedule_event($t2, 's2p_cron_sync_catchup');
+  }
 }
 
 /**
@@ -70,6 +142,10 @@ function s2p_on_deactivate() {
 function s2p_reschedule_cron_from_options() {
   $enabled = (bool) get_option('s2p_schedule_enabled', false);
   $freq    = get_option('s2p_schedule_frequency', 'hourly'); // s2p_15min | hourly | daily
+
+  // Guard: allow only known frequencies
+  $allowed_freq = ['s2p_15min', 'hourly', 'daily'];
+  if (!in_array($freq, $allowed_freq, true)) { $freq = 'hourly'; }
 
   // Clear existing
   $timestamp = wp_next_scheduled('s2p_cron_sync');
@@ -598,8 +674,9 @@ function s2p_run_scheduled_sync() {
     }
   }
 
-  // Save last run log
+  // Save last run log + timestamp
   update_option('s2p_last_cron_log', $log);
+  update_option('s2p_last_cron_run_ts', time());
 
   // Release lock
   delete_transient('s2p_sync_lock');
@@ -621,6 +698,7 @@ function s2p_render_settings_page() {
   $schedule_enabled = (bool) get_option('s2p_schedule_enabled', false);
   $schedule_freq    = get_option('s2p_schedule_frequency', 'hourly');
   $last_log         = get_option('s2p_last_cron_log', []);
+  $last_run_ts      = (int) get_option('s2p_last_cron_run_ts', 0);
 
   /**
    * Add a sheet
@@ -810,6 +888,15 @@ function s2p_render_settings_page() {
   // Useful display: next cron time
   $next_run = wp_next_scheduled('s2p_cron_sync');
 
+  // Friendly status text
+  $cron_mode_label = s2p_is_real_cron_enabled() ? 'Real Cron (Reliable)' : 'WP-Cron (Standard)';
+  $freq_seconds = s2p_frequency_to_seconds($schedule_freq);
+
+  // Rough expectation: WP-Cron may wait until the next site hit. Watchdog helps.
+  $watchdog_note = $schedule_enabled
+    ? 'This plugin includes a catch-up watchdog. If your site is quiet, the next visitor triggers the overdue scheduled sync.'
+    : '';
+
   ?>
   <div class="wrap">
     <style>
@@ -911,6 +998,17 @@ function s2p_render_settings_page() {
         background:#f6f7f7;
         font-size:12px;
         color:#1d2327;
+      }
+      details.s2p-details{
+        margin-top:10px;
+        border:1px solid #dcdcde;
+        border-radius:12px;
+        padding:10px 12px;
+        background:#fff;
+      }
+      details.s2p-details summary{
+        cursor:pointer;
+        font-weight:600;
       }
     </style>
 
@@ -1053,16 +1151,46 @@ This is **bold** and this is *italic*.
                 </select>
 
                 <p class="s2p-help">
-                  WordPress scheduled tasks run when your site gets visits. Low-traffic sites may run a little late (that’s normal).
+                  <strong>Scheduler mode:</strong> <?php echo esc_html($cron_mode_label); ?><br>
+                  <?php echo esc_html($watchdog_note); ?>
                 </p>
+
+                <?php if (!$s2p_is_real = s2p_is_real_cron_enabled()): ?>
+                  <details class="s2p-details">
+                    <summary>Want exact timing (recommended for business sites)? Enable Real Cron</summary>
+                    <div class="s2p-help" style="margin-top:8px;">
+                      This is optional, but it makes scheduled sync run on-time even if your site has no visitors.
+                    </div>
+                    <div class="s2p-box" style="margin-top:10px;">Step 1 (wp-config.php):
+Add this line ABOVE the "That's all" line:
+
+define('DISABLE_WP_CRON', true);
+
+Step 2 (Server Cron Job):
+Run this every 15 minutes (or whatever you want):
+
+curl -s https://YOURDOMAIN.com/wp-cron.php?doing_wp_cron >/dev/null 2>&1
+
+(You can use wget instead of curl if needed.)</div>
+                  </details>
+                <?php endif; ?>
               </div>
 
               <div>
                 <div class="s2p-box"><?php
                   if ($schedule_enabled) {
                     echo "Status: ENABLED\n";
-                    echo "Next run: " . ($next_run ? date_i18n('Y-m-d H:i:s', $next_run) : 'Soon') . "\n";
                     echo "Frequency: " . esc_html($schedule_freq) . "\n";
+                    echo "Next run: " . ($next_run ? date_i18n('Y-m-d H:i:s', $next_run) : 'Soon') . "\n";
+                    echo "Last run: " . ($last_run_ts ? date_i18n('Y-m-d H:i:s', $last_run_ts) : 'Not yet') . "\n";
+
+                    if (!$next_run) {
+                      echo "\nNote: Schedule was missing. It will be recreated automatically.\n";
+                    }
+
+                    if ($next_run && (time() - $next_run) > 120) {
+                      echo "\nNote: Next run appears overdue. A catch-up run will be queued soon.\n";
+                    }
                   } else {
                     echo "Status: OFF\n";
                     echo "Tip: turn this on for “set it and forget it”.\n";
@@ -1094,7 +1222,7 @@ This is **bold** and this is *italic*.
             </div>
 
             <p class="s2p-help" style="margin-top:8px;">
-              Tip: Use manual <strong>Sync</strong> buttons anytime. Scheduled sync is just “automatic Sync All.”
+              Tip: Use manual <strong>Sync</strong> buttons anytime. Scheduled sync is automatic “Sync All.”
             </p>
           </div>
 
