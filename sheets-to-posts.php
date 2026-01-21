@@ -199,37 +199,6 @@ function s2p_save_sheets($sheets) {
 
 /**
  * ----------------------------
- * Status helpers
- * ----------------------------
- */
-function s2p_allowed_post_statuses() {
-  return ['draft', 'publish', 'private', 'pending', 'future'];
-}
-
-function s2p_normalize_post_status($status_raw) {
-  $s = strtolower(trim((string)$status_raw));
-  if ($s === '') { return ''; }
-  $allowed = s2p_allowed_post_statuses();
-  return in_array($s, $allowed, true) ? $s : '';
-}
-
-/**
- * Parse a sheet-provided date.
- * Supports columns like: post_date or date
- * Returns MySQL datetime string or ''.
- */
-function s2p_parse_post_date($date_raw) {
-  $date_raw = trim((string)$date_raw);
-  if ($date_raw === '') { return ''; }
-
-  $ts = strtotime($date_raw);
-  if (!$ts) { return ''; }
-
-  return gmdate('Y-m-d H:i:s', $ts);
-}
-
-/**
- * ----------------------------
  * Convert a normal Google Sheets link into a CSV export link.
  * NOTE: If user pastes a “gviz” or “export” URL, we still try to pull the /d/<id>/ part.
  * ----------------------------
@@ -489,7 +458,7 @@ function s2p_apply_template($template, $row, $map) {
 /**
  * Build a row hash to detect unchanged rows.
  */
-function s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status, $post_date) {
+function s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status) {
   $hash_source = json_encode([
     'mode' => $saved_mode,
     'template' => $saved_mode === 'developer' ? (string)$saved_tpl : '',
@@ -499,7 +468,6 @@ function s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $ca
     'tags' => (string)$tags_string,
     'featured_image' => (string)$image_url,
     'status' => (string)$status,
-    'post_date' => (string)$post_date,
   ]);
   return md5($hash_source);
 }
@@ -550,11 +518,6 @@ function s2p_process_sheet_sync($sheet_name, $sheet_url, $saved_mode, $saved_tpl
     );
   }
 
-  $force_status_from_sheet = (bool) get_option('s2p_force_status_from_sheet', false);
-  $default_new_status_raw  = get_option('s2p_default_new_post_status', 'draft');
-  $default_new_status      = s2p_normalize_post_status($default_new_status_raw);
-  if ($default_new_status === '') { $default_new_status = 'draft'; }
-
   $created = 0;
   $updated = 0;
   $unchanged = 0;
@@ -580,69 +543,34 @@ function s2p_process_sheet_sync($sheet_name, $sheet_url, $saved_mode, $saved_tpl
     $category_name = sanitize_text_field(s2p_cell($row, $map, 'category'));
     $tags_string   = s2p_cell($row, $map, 'tags');
     $image_url     = esc_url_raw(s2p_cell($row, $map, 'featured_image'));
+    $status_raw    = strtolower(trim(s2p_cell($row, $map, 'status')));
+    $status        = ($status_raw === 'publish') ? 'publish' : 'draft';
 
-    $status_sheet  = s2p_normalize_post_status(s2p_cell($row, $map, 'status'));
-
-    $post_date_raw = s2p_cell($row, $map, 'post_date');
-    if ($post_date_raw === '') { $post_date_raw = s2p_cell($row, $map, 'date'); }
-    $post_date     = s2p_parse_post_date($post_date_raw);
+    $row_hash = s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status);
 
     // No duplicates: find existing by title
     $existing_id = s2p_find_post_by_title($title);
-    $existing_post = $existing_id ? get_post($existing_id) : null;
-
-    // Status resolution:
-    // - Updates: preserve existing status exactly (default), unless Force is enabled and sheet provides status.
-    // - New posts: use sheet status if provided; otherwise use Default new status setting.
-    $status = $existing_post ? $existing_post->post_status : $default_new_status;
-
-    if ($existing_post) {
-      if ($force_status_from_sheet && $status_sheet !== '') {
-        $status = $status_sheet;
-      }
-    } else {
-      $status = ($status_sheet !== '') ? $status_sheet : $default_new_status;
-    }
-
-    // Scheduling: if status is future, require a valid future date.
-    // If missing/invalid for new posts, fall back to default new status (safer).
-    if ($status === 'future') {
-      $now = time();
-      $ts  = $post_date !== '' ? strtotime($post_date . ' UTC') : 0;
-
-      if ($existing_post && $post_date === '') {
-        $post_date = $existing_post->post_date_gmt ? $existing_post->post_date_gmt : $existing_post->post_date;
-      }
-
-      if (!$ts || ($ts - $now) < 60) {
-        if (!$existing_post) {
-          $status = $default_new_status;
-          $post_date = '';
-        }
-      }
-    }
-
-    $row_hash = s2p_build_row_hash($saved_mode, $saved_tpl, $title, $final_content, $category_name, $tags_string, $image_url, $status, $post_date);
 
     if ($existing_id) {
+      // CHANGE A: only update posts created by this plugin
+      if (get_post_meta($existing_id, '_s2p_source', true) !== 'sheets_to_posts') {
+        $skipped++;
+        continue;
+      }
+
       $prev_hash = get_post_meta($existing_id, '_s2p_row_hash', true);
       if ($prev_hash && $prev_hash === $row_hash) {
         $unchanged++;
         continue;
       }
 
-      $update_args = [
+      $result = wp_update_post([
         'ID'           => $existing_id,
         'post_title'   => $title,
         'post_content' => $final_content,
         'post_status'  => $status,
         'post_type'    => 'post',
-      ];
-      if ($post_date !== '') {
-        $update_args['post_date_gmt'] = $post_date;
-      }
-
-      $result = wp_update_post($update_args, true);
+      ], true);
 
       if (is_wp_error($result)) { $skipped++; continue; }
 
@@ -652,21 +580,20 @@ function s2p_process_sheet_sync($sheet_name, $sheet_url, $saved_mode, $saved_tpl
 
     } else {
 
-      $insert_args = [
+      $post_id = wp_insert_post([
         'post_title'   => $title,
         'post_content' => $final_content,
         'post_status'  => $status,
         'post_type'    => 'post',
-      ];
-      if ($post_date !== '') {
-        $insert_args['post_date_gmt'] = $post_date;
-      }
-
-      $post_id = wp_insert_post($insert_args, true);
+      ], true);
 
       if (is_wp_error($post_id)) { $skipped++; continue; }
 
       update_post_meta($post_id, '_s2p_row_hash', $row_hash);
+
+      // CHANGE A: tag posts created by this plugin
+      update_post_meta($post_id, '_s2p_source', 'sheets_to_posts');
+
       $created++;
     }
 
@@ -778,9 +705,6 @@ function s2p_render_settings_page() {
   $saved_tpl  = get_option('s2p_template', "<h2>{{title}}</h2>\n<p>{{content}}</p>");
   $sheets     = s2p_get_sheets();
 
-  $force_status_from_sheet = (bool) get_option('s2p_force_status_from_sheet', false);
-  $default_new_status      = get_option('s2p_default_new_post_status', 'draft');
-
   $schedule_enabled = (bool) get_option('s2p_schedule_enabled', false);
   $schedule_freq    = get_option('s2p_schedule_frequency', 'hourly');
   $last_log         = get_option('s2p_last_cron_log', []);
@@ -838,11 +762,6 @@ function s2p_render_settings_page() {
     $enabled = isset($_POST['s2p_schedule_enabled']) ? true : false;
     $freq    = isset($_POST['s2p_schedule_frequency']) ? sanitize_text_field($_POST['s2p_schedule_frequency']) : 'hourly';
 
-    $force = isset($_POST['s2p_force_status_from_sheet']) ? true : false;
-    $new_status = isset($_POST['s2p_default_new_post_status']) ? sanitize_text_field($_POST['s2p_default_new_post_status']) : 'draft';
-    $new_status = s2p_normalize_post_status($new_status);
-    if ($new_status === '') { $new_status = 'draft'; }
-
     // Guard: allow only known frequencies
     $allowed_freq = ['s2p_15min', 'hourly', 'daily'];
     if (!in_array($freq, $allowed_freq, true)) { $freq = 'hourly'; }
@@ -852,16 +771,10 @@ function s2p_render_settings_page() {
     update_option('s2p_schedule_enabled', $enabled);
     update_option('s2p_schedule_frequency', $freq);
 
-    update_option('s2p_force_status_from_sheet', $force);
-    update_option('s2p_default_new_post_status', $new_status);
-
     $saved_mode = $mode;
     $saved_tpl  = $tpl;
     $schedule_enabled = $enabled;
     $schedule_freq = $freq;
-
-    $force_status_from_sheet = $force;
-    $default_new_status = $new_status;
 
     // Apply cron schedule now
     s2p_reschedule_cron_from_options();
@@ -1107,20 +1020,6 @@ function s2p_render_settings_page() {
         cursor:pointer;
         font-weight:600;
       }
-
-      .s2p-remove-btn{
-        background:#d63638 !important;
-        border-color:#d63638 !important;
-        color:#fff !important;
-      }
-      .s2p-remove-btn:hover{
-        background:#b32d2e !important;
-        border-color:#b32d2e !important;
-        color:#fff !important;
-      }
-      .s2p-remove-btn:focus{
-        box-shadow:0 0 0 2px rgba(214,54,56,.25) !important;
-      }
     </style>
 
     <h1>Sheets to Posts</h1>
@@ -1133,6 +1032,11 @@ function s2p_render_settings_page() {
           alt="Sheets to Posts"
         />
         <div class="s2p-tagline">From Google Sheets to WordPress posts. Fast, clean, and repeatable.</div>
+      </div>
+
+      <!-- CHANGE B: visible warning (non-dismissible) -->
+      <div style="margin:-4px 0 14px 0; padding:10px 12px; border:1px solid #dcdcde; border-left:4px solid #d63638; background:#fff8e5; border-radius:10px;">
+        Important: Sheets to Posts matches posts by title. Only posts originally created by this plugin will be updated automatically.
       </div>
 
       <form method="post">
@@ -1174,7 +1078,7 @@ function s2p_render_settings_page() {
                           <button type="submit" class="button" name="s2p_sync_one" value="1">Sync</button>
                           <input type="number" name="s2p_test_row_index" min="1" value="1" />
                           <button type="submit" class="button" name="s2p_test_row" value="1">Test</button>
-                          <button type="submit" class="button s2p-remove-btn" name="s2p_delete_sheet" value="1" onclick="return confirm('Remove this sheet from the list?');" style="margin-left:6px;">Remove</button>
+                          <button type="submit" class="button-link-delete" name="s2p_delete_sheet" value="1" onclick="return confirm('Remove this sheet from the list?');" style="margin-left:6px;">Remove</button>
                           <input type="hidden" name="s2p_delete_sheet_id" value="<?php echo esc_attr($s['id']); ?>" />
                         </div>
                       </td>
@@ -1216,26 +1120,6 @@ function s2p_render_settings_page() {
                 <option value="simple" <?php selected($saved_mode, 'simple'); ?>>Simple Mode (Markdown)</option>
                 <option value="developer" <?php selected($saved_mode, 'developer'); ?>>Developer Mode (Template + Tokens)</option>
               </select>
-
-              <div style="margin-top:10px;">
-                <label class="s2p-label" for="s2p_default_new_post_status">Default status for NEW posts</label>
-                <select id="s2p_default_new_post_status" name="s2p_default_new_post_status" style="width:100%; max-width:420px;">
-                  <option value="draft" <?php selected($default_new_status, 'draft'); ?>>Draft</option>
-                  <option value="publish" <?php selected($default_new_status, 'publish'); ?>>Publish</option>
-                  <option value="private" <?php selected($default_new_status, 'private'); ?>>Private</option>
-                  <option value="pending" <?php selected($default_new_status, 'pending'); ?>>Pending Review</option>
-                  <option value="future" <?php selected($default_new_status, 'future'); ?>>Scheduled (Future)</option>
-                </select>
-                <p class="s2p-help">Used when the sheet status cell is blank or missing. Updates preserve the existing status unless you enable the force option below.</p>
-              </div>
-
-              <div style="margin-top:10px;">
-                <label class="s2p-label" style="margin-bottom:8px;">
-                  <input type="checkbox" name="s2p_force_status_from_sheet" value="1" <?php checked($force_status_from_sheet, true); ?> />
-                  Force status from sheet (also on UPDATES)
-                </label>
-                <p class="s2p-help">Default is safe: existing posts keep their current status. Turn this on only if your sheet is the source of truth for status.</p>
-              </div>
 
               <p class="s2p-help">
                 <strong>Simple Mode:</strong> Put formatting inside the <span class="s2p-code">content</span> cell. Wrap the exact word(s):
@@ -1362,7 +1246,7 @@ curl -s https://YOURDOMAIN.com/wp-cron.php?doing_wp_cron >/dev/null 2>&1
             <span class="s2p-label">Supported Sheet Columns</span>
             <div class="s2p-box">Required: title
 Simple Mode requires: content
-Optional: category, tags, featured_image, status (draft/publish/private/pending/future), post_date (or date)
+Optional: category, tags, featured_image, status (draft/publish)
 
 Template tokens (Developer Mode): use {{column_name}} for any header.</div>
           </div>
